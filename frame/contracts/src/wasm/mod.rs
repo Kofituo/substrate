@@ -30,7 +30,7 @@ pub use crate::wasm::{
 };
 
 #[cfg(doc)]
-pub use crate::wasm::runtime::api_doc;
+pub use crate::wasm::runtime::ApiDoc;
 
 use crate::{
 	exec::{ExecResult, Executable, ExportedFunction, Ext},

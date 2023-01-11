@@ -25,12 +25,14 @@
 extern crate alloc;
 
 use alloc::{
+	collections::BTreeMap,
 	format,
 	string::{String, ToString},
 	vec::Vec,
 };
+use core::cmp::Reverse;
 use proc_macro::TokenStream;
-use proc_macro2::{Span, TokenStream as TokenStream2};
+use proc_macro2::TokenStream as TokenStream2;
 use quote::{quote, quote_spanned, ToTokens};
 use syn::{
 	parse_macro_input, punctuated::Punctuated, spanned::Spanned, token::Comma, Data, DeriveInput,
@@ -157,7 +159,7 @@ struct EnvDef {
 /// Parsed host function definition.
 struct HostFn {
 	item: syn::ItemFn,
-	module: String,
+	version: u8,
 	name: String,
 	returns: HostFnReturn,
 	is_stable: bool,
@@ -203,19 +205,18 @@ impl HostFn {
 		let span = item.span();
 		let mut attrs = item.attrs.clone();
 		attrs.retain(|a| !a.path.is_ident("doc"));
-		let mut maybe_module = None;
+		let mut maybe_version = None;
 		let mut is_stable = true;
 		let mut alias_to = None;
 		while let Some(attr) = attrs.pop() {
 			let ident = attr.path.get_ident().ok_or(err(span, msg))?.to_string();
 			match ident.as_str() {
 				"version" => {
-					if maybe_module.is_some() {
+					if maybe_version.is_some() {
 						return Err(err(span, "#[version] can only be specified once"))
 					}
-					let ver: u8 =
-						attr.parse_args::<syn::LitInt>().and_then(|lit| lit.base10_parse())?;
-					maybe_module = Some(format!("seal{}", ver));
+					maybe_version =
+						Some(attr.parse_args::<syn::LitInt>().and_then(|lit| lit.base10_parse())?);
 				},
 				"unstable" => {
 					if !is_stable {
@@ -325,7 +326,7 @@ impl HostFn {
 
 						Ok(Self {
 							item,
-							module: maybe_module.unwrap_or_else(|| "seal0".to_string()),
+							version: maybe_version.unwrap_or_default(),
 							name,
 							returns,
 							is_stable,
@@ -337,6 +338,10 @@ impl HostFn {
 			},
 			_ => Err(err(span, &msg)),
 		}
+	}
+
+	fn module(&self) -> String {
+		format!("seal{}", self.version)
 	}
 }
 
@@ -393,82 +398,81 @@ fn is_valid_special_arg(idx: usize, arg: &FnArg) -> bool {
 }
 
 /// Expands documentation for host functions.
-fn expand_docs(def: &mut EnvDef) -> TokenStream2 {
-	let mut modules = def.host_funcs.iter().map(|f| f.module.clone()).collect::<Vec<_>>();
-	modules.sort();
-	modules.dedup();
+fn expand_docs(def: &EnvDef) -> TokenStream2 {
+	let mut docs = BTreeMap::new();
 
-	let doc_selector = |a: &syn::Attribute| a.path.is_ident("doc");
-	let docs = modules.iter().map(|m| {
-		let funcs = def.host_funcs.iter_mut().map(|f| {
-			if *m == f.module {
-				// Remove auxiliary args: `ctx: _` and `memory: _`
-				f.item.sig.inputs = f
-					.item
-					.sig
-					.inputs
-					.iter()
-					.skip(2)
-					.map(|p| p.clone())
-					.collect::<Punctuated<FnArg, Comma>>();
-				let func_decl = f.item.sig.to_token_stream();
-				let func_doc = if let Some(origin_fn) = &f.alias_to {
-					let alias_doc = format!(
-						"This is just an alias function to [`{0}()`][`Self::{0}`] with backwards-compatible prefixed identifier.",
-						origin_fn,
-					);
-					quote! { #[doc = #alias_doc] }
+	// we sort so that only the newest versions make it into `docs`
+	let mut funcs: Vec<_> = def.host_funcs.iter().filter(|f| f.alias_to.is_none()).collect();
+	funcs.sort_unstable_by_key(|func| Reverse(func.version));
 
-				} else {
-					let func_docs = f.item.attrs.iter().filter(|a| doc_selector(a)).map(|d| {
-						let docs = d.to_token_stream();
-						quote! { #docs }
-					});
-					let unstable_notice = if !f.is_stable {
-						let warning = "\n # Unstable\n\n \
-									    This function is unstable and it is a subject to change (or removal) in the future.\n \
-									    Do not deploy a contract using it to a production chain.";
-						quote! { #[doc = #warning] }
-					} else {
-						quote! {}
-					};
-					quote! {
-						#( #func_docs )*
-						#unstable_notice
-					}
-				};
-				quote! {
-					#func_doc
-					#func_decl;
-				}
+	for func in funcs {
+		if docs.contains_key(&func.name) {
+			continue
+		}
+		// Remove auxiliary args: `ctx: _` and `memory: _`
+		let func_decl = {
+			let mut sig = func.item.sig.clone();
+			sig.inputs = sig
+				.inputs
+				.iter()
+				.skip(2)
+				.map(|p| p.clone())
+				.collect::<Punctuated<FnArg, Comma>>();
+			sig.to_token_stream()
+		};
+		let func_doc = {
+			let func_docs = func.item.attrs.iter().filter(|a| a.path.is_ident("doc")).map(|d| {
+				let docs = d.to_token_stream();
+				quote! { #docs }
+			});
+			let import_notice = {
+				let info = format!(
+					"\n# Wasm Import Statement\n```\n(import \"seal{}\" \"{}\" (func ...))\n```",
+					func.version, func.name,
+				);
+				quote! { #[doc = #info] }
+			};
+			let unstable_notice = if !func.is_stable {
+				let warning = "\n # Unstable\n\n \
+								This function is unstable and it is a subject to change (or removal) in the future.\n \
+								Do not deploy a contract using it to a production chain.";
+				quote! { #[doc = #warning] }
 			} else {
 				quote! {}
+			};
+			quote! {
+				#( #func_docs )*
+				#import_notice
+				#unstable_notice
 			}
-		});
-
-		let module = Ident::new(m, Span::call_site());
-		let module_doc = format!(
-			"Documentation of the API available to contracts by importing `{}` WASM module.",
-			module
+		};
+		docs.insert(
+			func.name.clone(),
+			quote! {
+				#func_doc
+				#func_decl;
+			},
 		);
+	}
 
-		quote! {
-			#[doc = #module_doc]
-			pub mod #module {
-				use crate::wasm::runtime::{TrapReason, ReturnCode};
-				/// Every function in this trait represents (at least) one function that can be imported by a contract.
-				///
-				/// The function's identifier is to be set as the name in the import definition.
-				/// Where it is specifically indicated, an _alias_ function having `seal_`-prefixed identifier and
-				/// just the same signature and body, is also available (for backwards-compatibility purposes).
-				pub trait Api {
-					#( #funcs )*
-				}
-			}
-		}
-	});
+	let docs = docs.values();
+
 	quote! {
-		  #( #docs )*
+		/// Contains the documentation of the API available to contracts.
+		///
+		/// In reality there are more functions available but they are all obsolete: When a function
+		/// is updated a new **version** is added and the old versions stays available as-is.
+		/// We only list the newest version here. Some functions are available under additional
+		/// names for historic reasons which are omitted here.
+		///
+		/// # Note
+		///
+		/// This module is not meant to be used by any code. Rather, it is meant to be
+		/// consumed by humans through rustdoc.
+		#[cfg(doc)]
+		pub trait ApiDoc {
+			#( #docs )*
+		}
 	}
 }
 
@@ -476,34 +480,21 @@ fn expand_docs(def: &mut EnvDef) -> TokenStream2 {
 /// Should generate source code for:
 ///  - implementations of the host functions to be added to the wasm runtime environment (see
 ///    `expand_impls()`).
-fn expand_env(def: &mut EnvDef, docs: bool) -> TokenStream2 {
+fn expand_env(def: &EnvDef, docs: bool) -> TokenStream2 {
 	let impls = expand_impls(def);
 	let docs = docs.then_some(expand_docs(def)).unwrap_or(TokenStream2::new());
 
 	quote! {
 		pub struct Env;
 		#impls
-		/// Contains the documentation of the API available to contracts.
-		///
-		/// In order to generate this documentation, pass `doc` attribute to the [`#[define_env]`][`macro@define_env`] macro:
-		/// `#[define_env(doc)]`, and then run `cargo doc`.
-		///
-		/// This module is not meant to be used by any code. Rather, it is meant to be consumed by humans through rustdoc.
-		///
-		/// Every function described in this module's sub module's traits uses this sub module's identifier
-		/// as its imported module name. The identifier of the function is the function's imported name.
-		/// According to the [WASM spec of imports](https://webassembly.github.io/spec/core/text/modules.html#text-import).
-		#[cfg(doc)]
-		pub mod api_doc {
-			#docs
-		}
+		#docs
 	}
 }
 
 /// Generates for every host function:
 ///   - real implementation, to register it in the contract execution environment;
 ///   - dummy implementation, to be used as mocks for contract validation step.
-fn expand_impls(def: &mut EnvDef) -> TokenStream2 {
+fn expand_impls(def: &EnvDef) -> TokenStream2 {
 	let impls = expand_functions(def, true, quote! { crate::wasm::Runtime<E> });
 	let dummy_impls = expand_functions(def, false, quote! { () });
 
@@ -526,16 +517,12 @@ fn expand_impls(def: &mut EnvDef) -> TokenStream2 {
 	}
 }
 
-fn expand_functions(
-	def: &mut EnvDef,
-	expand_blocks: bool,
-	host_state: TokenStream2,
-) -> TokenStream2 {
+fn expand_functions(def: &EnvDef, expand_blocks: bool, host_state: TokenStream2) -> TokenStream2 {
 	let impls = def.host_funcs.iter().map(|f| {
 		// skip the context and memory argument
 		let params = f.item.sig.inputs.iter().skip(2);
 		let (module, name, body, wasm_output, output) = (
-			&f.module,
+			f.module(),
 			&f.name,
 			&f.item.block,
 			f.returns.to_wasm_sig(),
