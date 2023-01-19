@@ -427,7 +427,7 @@ fn expand_docs(def: &EnvDef) -> TokenStream2 {
 			});
 			let import_notice = {
 				let info = format!(
-					"\n# Wasm Import Statement\n```\n(import \"seal{}\" \"{}\" (func ...))\n```",
+					"\n# Wasm Import Statement\n```wat\n(import \"seal{}\" \"{}\" (func ...))\n```",
 					func.version, func.name,
 				);
 				quote! { #[doc = #info] }
