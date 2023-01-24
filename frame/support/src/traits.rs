@@ -113,10 +113,17 @@ mod preimages;
 pub use preimages::{Bounded, BoundedInline, FetchResult, Hash, QueryPreimage, StorePreimage};
 
 mod messages;
-pub use messages::{
-	EnqueueMessage, ExecuteOverweightError, Footprint, ProcessMessage, ProcessMessageError, OnQueueChanged,
-	QueueIntrospect, ServiceQueues,
-};
+mod _messages {
+	pub use super::messages::{
+		EnqueueMessage, ExecuteOverweightError, Footprint, ProcessMessage, ProcessMessageError, OnQueueChanged,
+		QueueIntrospect, ServiceQueues,
+	};
+	// We export the `TransformOrigin` trait in its own module, since the name `TransformOrigin` is not very specific.
+	pub mod messages {
+		pub use crate::traits::messages::TransformOrigin;
+	}
+}
+pub use _messages::*;
 
 #[cfg(feature = "try-runtime")]
 mod try_runtime;
