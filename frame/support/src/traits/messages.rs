@@ -215,3 +215,14 @@ pub trait QueueIntrospect<O: MaxEncodedLen> {
 pub trait QueueManager<O: MaxEncodedLen> {
 	fn remove(origin: O, force: bool);
 }
+
+/// Handler code for when the items in a queue change.
+pub trait OnQueueChanged<Id> {
+	/// Note that the queue `id` now has `item_count` items in it, taking up `items_size` bytes.
+	fn on_queue_changed(id: Id, items_count: u64, items_size: u64);
+}
+
+impl<Id> OnQueueChanged<Id> for () {
+	// FAIL-CI try use &Id
+	fn on_queue_changed(_: Id, _: u64, _: u64) {}
+}

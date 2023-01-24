@@ -114,7 +114,7 @@ pub use preimages::{Bounded, BoundedInline, FetchResult, Hash, QueryPreimage, St
 
 mod messages;
 pub use messages::{
-	EnqueueMessage, ExecuteOverweightError, Footprint, ProcessMessage, ProcessMessageError,
+	EnqueueMessage, ExecuteOverweightError, Footprint, ProcessMessage, ProcessMessageError, OnQueueChanged,
 	QueueIntrospect, ServiceQueues,
 };
 

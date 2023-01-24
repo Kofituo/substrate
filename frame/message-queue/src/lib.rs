@@ -194,7 +194,7 @@ use frame_support::{
 	defensive,
 	pallet_prelude::*,
 	traits::{
-		DefensiveTruncateFrom, EnqueueMessage, ExecuteOverweightError, Footprint, ProcessMessage,
+		DefensiveTruncateFrom, EnqueueMessage, ExecuteOverweightError, Footprint, ProcessMessage, OnQueueChanged,
 		ProcessMessageError, ServiceQueues,
 	},
 	BoundedSlice, CloneNoBound, DefaultNoBound,
@@ -423,22 +423,11 @@ impl<MessageOrigin> Default for BookState<MessageOrigin> {
 	}
 }
 
-/// Handler code for when the items in a queue change.
-pub trait OnQueueChanged<Id> {
-	/// Note that the queue `id` now has `item_count` items in it, taking up `items_size` bytes.
-	fn on_queue_changed(id: Id, items_count: u64, items_size: u64);
-}
-
-impl<Id> OnQueueChanged<Id> for () {
-	// FAIL-CI try use &Id
-	fn on_queue_changed(_: Id, _: u64, _: u64) {}
-}
-
 impl<T: Config> frame_support::traits::QueueIntrospect<MessageOriginOf<T>> for Pallet<T> {
 	type MaxMessageLen = MaxMessageLenOf<T>;
 
 	fn messages(
-		origin: MessageOriginOf<T>,
+		_origin: MessageOriginOf<T>,
 	) -> Result<Vec<BoundedVec<u8, Self::MaxMessageLen>>, ()> {
 		#[cfg(std)] // Lets make sure we don't accidentally alter storage.
 		let _guard = frame_support::StorageNoopGuard::new();
