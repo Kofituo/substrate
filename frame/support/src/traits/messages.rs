@@ -203,14 +203,13 @@ where
 
 /// Can be used to gain information about the messages in a queue.
 ///
-/// The PoV consumption of this can be arbitrarily large. Should only be used in context where this is not an issue. For example runtime-APIs.
+/// The PoV consumption of this can be arbitrarily large. Should only be used in context where this
+/// is not an issue. For example runtime-APIs.
 pub trait QueueIntrospect<O: MaxEncodedLen> {
-	type MaxMessageLen: Get<Option<u32>>;
+	type MaxMessageLen: Get<u32>;
 
 	// FAIL-CI maybe filter by `processed` or something
-	fn messages(origin: O) -> Result<Vec<BoundedVec<u8, Self::MaxMessageLen>, ()>;
-
-	fn peek(origin: O, index: u32) -> Result<BoundedVec<u8, Self::MaxMessageLen>>, ()>;
+	fn messages(origin: O) -> Result<Vec<crate::BoundedVec<u8, Self::MaxMessageLen>>, ()>;
 }
 
 pub trait QueueManager<O: MaxEncodedLen> {
