@@ -430,7 +430,16 @@ pub trait OnQueueChanged<Id> {
 }
 
 impl<Id> OnQueueChanged<Id> for () {
+	// FAIL-CI try use &Id
 	fn on_queue_changed(_: Id, _: u64, _: u64) {}
+}
+
+impl<T: Config> QueueIntrospect<MessageOriginOf<T>> for Pallet {
+	fn messages(origin: MessageOriginOf<T>) -> Vec<BoundedVec<u8, Self::MaxMessageLen>> {
+		#[cfg(std)] // Lets make sure we don't accidentally alter storage.
+		let _guard = frame_support::StorageNoopGuard::new();
+		Vec::new()
+	}
 }
 
 #[frame_support::pallet]
