@@ -307,4 +307,4 @@ lto = "fat"
 codegen-units = 1
 
 [patch.crates-io]
-finality-grandpa = { path = "/Users/kofiotuo/CLionProjects/finality-grandpa-local" }
+finality-grandpa = { git = "https://github.com/Kofituo/finality-grandpa.git" }
